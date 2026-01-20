@@ -1,0 +1,32 @@
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/polyrepo-test
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://test.okta.com/oauth2/default
+          jwk-set-uri: https://test.okta.com/oauth2/default/v1/keys
+
+  modulith:
+    events:
+      externalization:
+        enabled: false
+    republish-outstanding-events-on-restart: false
+
+  autoconfigure:
+    exclude:
+      - org.springframework.modulith.events.mongodb.MongoDbEventPublicationAutoConfiguration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: WARN
+    com.polyrepo: DEBUG

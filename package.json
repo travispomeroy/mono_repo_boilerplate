@@ -1,0 +1,30 @@
+{
+  "name": "polyrepo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Polyrepo monorepo with React frontend and Spring Boot Modulith backend",
+  "scripts": {
+    "prepare": "husky",
+    "verify": "./scripts/verify-environment.sh",
+    "dev": "docker compose -f docker/docker-compose.yml up",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && ./mvnw spring-boot:run -Dspring-boot.run.profiles=local",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && ./mvnw clean package -DskipTests",
+    "test:frontend": "cd frontend && npm test",
+    "test:backend": "cd backend && ./mvnw test",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:backend": "cd backend && ./mvnw spotless:check",
+    "format:backend": "cd backend && ./mvnw spotless:apply",
+    "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.3.0",
+    "@commitlint/config-conventional": "^19.2.2",
+    "conventional-changelog-cli": "^5.0.0",
+    "husky": "^9.0.11"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

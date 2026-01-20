@@ -1,0 +1,322 @@
+stages:
+  - validate
+  - build
+  - test
+  - security
+  - package
+  - deploy-preview
+  - deploy-prod
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  MAVEN_CLI_OPTS: "-B --no-transfer-progress"
+  NODE_OPTIONS: "--max-old-space-size=4096"
+  BACKEND_IMAGE: $CI_REGISTRY_IMAGE/backend
+  FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .m2/repository/
+    - frontend/node_modules/
+
+# ====================
+# VALIDATE STAGE
+# ====================
+
+commitlint:
+  stage: validate
+  image: node:20-alpine
+  script:
+    - npm ci
+    - npx commitlint --from $CI_MERGE_REQUEST_DIFF_BASE_SHA --to $CI_COMMIT_SHA
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+lint:frontend:
+  stage: validate
+  image: node:20-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
+    - npm run format:check
+  rules:
+    - changes:
+        - frontend/**/*
+
+lint:backend:
+  stage: validate
+  image: eclipse-temurin:21-jdk-alpine
+  script:
+    - cd backend
+    - ./mvnw $MAVEN_CLI_OPTS spotless:check
+  rules:
+    - changes:
+        - backend/**/*
+
+# ====================
+# BUILD STAGE
+# ====================
+
+build:frontend:
+  stage: build
+  image: node:20-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - frontend/dist/
+    expire_in: 1 day
+  rules:
+    - changes:
+        - frontend/**/*
+
+build:backend:
+  stage: build
+  image: eclipse-temurin:21-jdk-alpine
+  script:
+    - cd backend
+    - ./mvnw $MAVEN_CLI_OPTS clean compile
+  artifacts:
+    paths:
+      - backend/target/
+    expire_in: 1 day
+  rules:
+    - changes:
+        - backend/**/*
+
+# ====================
+# TEST STAGE
+# ====================
+
+test:frontend:unit:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run test:coverage
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    reports:
+      junit: frontend/test-results/junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: frontend/coverage/cobertura-coverage.xml
+    paths:
+      - frontend/coverage/
+    expire_in: 1 week
+  rules:
+    - changes:
+        - frontend/**/*
+
+test:backend:unit:
+  stage: test
+  image: eclipse-temurin:21-jdk-alpine
+  script:
+    - cd backend
+    - ./mvnw $MAVEN_CLI_OPTS test
+  artifacts:
+    reports:
+      junit: backend/target/surefire-reports/*.xml
+    expire_in: 1 week
+  rules:
+    - changes:
+        - backend/**/*
+
+test:backend:integration:
+  stage: test
+  image: eclipse-temurin:21-jdk-alpine
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: 1
+    TESTCONTAINERS_RYUK_DISABLED: "true"
+  script:
+    - cd backend
+    - ./mvnw $MAVEN_CLI_OPTS verify -DskipUnitTests
+  artifacts:
+    reports:
+      junit: backend/target/failsafe-reports/*.xml
+    expire_in: 1 week
+  rules:
+    - changes:
+        - backend/**/*
+
+test:backend:modularity:
+  stage: test
+  image: eclipse-temurin:21-jdk-alpine
+  script:
+    - cd backend
+    - ./mvnw $MAVEN_CLI_OPTS test -Dtest=ModularityTests
+  artifacts:
+    paths:
+      - backend/target/modulith-docs/
+    expire_in: 1 week
+  rules:
+    - changes:
+        - backend/**/*
+
+test:e2e:
+  stage: test
+  image: mcr.microsoft.com/playwright:v1.49.0
+  services:
+    - name: eclipse-temurin:21-jdk-alpine
+      alias: backend
+      command: ["sh", "-c", "cd /builds/$CI_PROJECT_PATH/backend && ./mvnw spring-boot:run -Dspring-boot.run.profiles=test"]
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+    - npm run preview &
+    - sleep 5
+    - npx playwright install --with-deps chromium
+    - npm run test:e2e -- --project=chromium
+  artifacts:
+    paths:
+      - frontend/playwright-report/
+      - frontend/test-results/
+    reports:
+      junit: frontend/test-results/junit.xml
+    expire_in: 1 week
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ====================
+# SECURITY STAGE
+# ====================
+
+dependency_scanning:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/gemnasium:latest
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      dependency_scanning: gl-dependency-scanning-report.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+sast:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/semgrep:latest
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+secret_detection:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/analyzers/secrets:latest
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      secret_detection: gl-secret-detection-report.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ====================
+# PACKAGE STAGE
+# ====================
+
+package:backend:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -f docker/backend/Dockerfile -t $BACKEND_IMAGE:$CI_COMMIT_SHA -t $BACKEND_IMAGE:latest .
+    - docker push $BACKEND_IMAGE:$CI_COMMIT_SHA
+    - docker push $BACKEND_IMAGE:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        BACKEND_IMAGE: $CI_REGISTRY_IMAGE/backend-mr
+
+package:frontend:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -f docker/frontend/Dockerfile -t $FRONTEND_IMAGE:$CI_COMMIT_SHA -t $FRONTEND_IMAGE:latest .
+    - docker push $FRONTEND_IMAGE:$CI_COMMIT_SHA
+    - docker push $FRONTEND_IMAGE:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend-mr
+
+# ====================
+# DEPLOY PREVIEW STAGE
+# ====================
+
+deploy:preview:
+  stage: deploy-preview
+  image: okteto/okteto:latest
+  environment:
+    name: preview/$CI_MERGE_REQUEST_IID
+    url: https://$CI_MERGE_REQUEST_IID.polyrepo.okteto.dev
+    on_stop: destroy:preview
+  script:
+    - okteto context use $OKTETO_URL --token $OKTETO_TOKEN
+    - okteto deploy --name polyrepo-mr-$CI_MERGE_REQUEST_IID
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+destroy:preview:
+  stage: deploy-preview
+  image: okteto/okteto:latest
+  environment:
+    name: preview/$CI_MERGE_REQUEST_IID
+    action: stop
+  script:
+    - okteto context use $OKTETO_URL --token $OKTETO_TOKEN
+    - okteto destroy --name polyrepo-mr-$CI_MERGE_REQUEST_IID
+  when: manual
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# ====================
+# DEPLOY PRODUCTION STAGE
+# ====================
+
+deploy:production:
+  stage: deploy-prod
+  image: bitnami/kubectl:latest
+  environment:
+    name: production
+    url: https://polyrepo.example.com
+  before_script:
+    - kubectl config set-cluster eks-cluster --server=$KUBE_SERVER --certificate-authority=$KUBE_CA_CERT
+    - kubectl config set-credentials gitlab --token=$KUBE_TOKEN
+    - kubectl config set-context eks --cluster=eks-cluster --user=gitlab --namespace=polyrepo
+    - kubectl config use-context eks
+  script:
+    - kubectl set image deployment/backend backend=$BACKEND_IMAGE:$CI_COMMIT_SHA -n polyrepo
+    - kubectl set image deployment/frontend frontend=$FRONTEND_IMAGE:$CI_COMMIT_SHA -n polyrepo
+    - kubectl rollout status deployment/backend -n polyrepo --timeout=300s
+    - kubectl rollout status deployment/frontend -n polyrepo --timeout=300s
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual

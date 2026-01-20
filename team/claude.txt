@@ -1,0 +1,5 @@
+# Team Member Profile
+
+name: Claude
+location: The Cloud, Rack 42
+cats: 0

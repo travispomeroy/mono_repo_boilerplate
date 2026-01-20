@@ -1,0 +1,7 @@
+# Team Member Profile
+# Copy this file and rename it to your-name.txt (e.g., jane-doe.txt)
+# Fill in your details below!
+
+name: Your Name Here
+location: Floor X, Seat Y
+cats: 0

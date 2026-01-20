@@ -1,0 +1,356 @@
+================================================================================
+                        POLYREPO SETUP CHECKLIST
+================================================================================
+
+This document lists all required setup steps to get the polyrepo fully
+operational across local development, CI/CD, and production environments.
+
+================================================================================
+1. LOCAL DEVELOPMENT PREREQUISITES
+================================================================================
+
+[ ] Install Java 21+
+    - macOS: brew install openjdk@21
+    - Verify: java --version
+
+[ ] Install Node.js 20+
+    - macOS: brew install node@20
+    - Verify: node --version && npm --version
+
+[ ] Install Docker and Docker Compose
+    - macOS: brew install --cask docker
+    - Verify: docker --version && docker compose version
+
+[ ] Clone the repository
+    - git clone <repository-url>
+    - cd polyrepo
+
+[ ] Install root dependencies (husky, commitlint)
+    - npm install
+
+[ ] Run the environment verification script
+    - npm run verify
+    - OR: ./scripts/verify-environment.sh
+    - Fix any issues reported by the script
+
+[ ] Verify husky hooks are installed
+    - ls -la .husky/commit-msg
+
+================================================================================
+2. OKTA CONFIGURATION
+================================================================================
+
+Create an Okta application for authentication:
+
+[ ] Log in to Okta Admin Console
+
+[ ] Create a new Application
+    - Applications > Create App Integration
+    - Sign-in method: OIDC
+    - Application type: Single-Page Application (SPA)
+
+[ ] Configure the application
+    - App name: Polyrepo
+    - Grant types: Authorization Code, Refresh Token
+    - Sign-in redirect URIs:
+        - http://localhost:3000/login/callback (local)
+        - https://*.okteto.dev/login/callback (preview)
+        - https://polyrepo.example.com/login/callback (production)
+    - Sign-out redirect URIs:
+        - http://localhost:3000 (local)
+        - https://*.okteto.dev (preview)
+        - https://polyrepo.example.com (production)
+    - Controlled access: Allow everyone in your organization
+
+[ ] Note down the following values:
+    - Client ID: ____________________________________
+    - Okta Domain: __________________________________
+    - Issuer URI: https://<okta-domain>/oauth2/default
+    - JWK Set URI: https://<okta-domain>/oauth2/default/v1/keys
+
+[ ] Create groups for authorization (optional)
+    - Directory > Groups > Add Group
+    - Example: polyrepo-users, polyrepo-admins
+
+[ ] Assign users/groups to the application
+    - Applications > Polyrepo > Assignments > Assign
+
+================================================================================
+3. MONGODB ATLAS CONFIGURATION (Production)
+================================================================================
+
+[ ] Create MongoDB Atlas account
+    - https://www.mongodb.com/cloud/atlas
+
+[ ] Create a new cluster
+    - Choose cloud provider and region
+    - Select cluster tier (M0 free tier for development)
+
+[ ] Configure database access
+    - Database Access > Add New Database User
+    - Authentication: Password
+    - Note credentials: ____________________________________
+
+[ ] Configure network access
+    - Network Access > Add IP Address
+    - Add CI/CD runner IPs
+    - Add EKS cluster IPs (or use VPC peering)
+
+[ ] Get connection string
+    - Clusters > Connect > Connect your application
+    - Driver: Java, Version: 4.3 or later
+    - Connection string: mongodb+srv://<user>:<password>@<cluster>.mongodb.net/polyrepo
+
+[ ] Create databases
+    - polyrepo-dev (development/staging)
+    - polyrepo-prod (production)
+
+================================================================================
+4. GITLAB REPOSITORY SETUP
+================================================================================
+
+[ ] Create GitLab repository or import existing
+
+[ ] Configure branch protection
+    - Settings > Repository > Protected Branches
+    - Protect 'main' branch
+    - Allowed to merge: Maintainers
+    - Allowed to push: No one (force push through MR only)
+
+[ ] Enable merge request approvals (optional)
+    - Settings > Merge requests
+    - Approval rules as needed
+
+================================================================================
+5. GITLAB CI/CD VARIABLES
+================================================================================
+
+Navigate to: Settings > CI/CD > Variables
+
+Required variables for ALL environments:
+
+[ ] OKTA_ISSUER_URI
+    - Value: https://<okta-domain>/oauth2/default
+    - Protected: No (needed for preview environments)
+    - Masked: No
+
+[ ] OKTA_JWK_SET_URI
+    - Value: https://<okta-domain>/oauth2/default/v1/keys
+    - Protected: No
+    - Masked: No
+
+Required variables for OKTETO (Preview Environments):
+
+[ ] OKTETO_URL
+    - Value: https://cloud.okteto.com (or self-hosted URL)
+    - Protected: No
+    - Masked: No
+
+[ ] OKTETO_TOKEN
+    - Value: <your-okteto-api-token>
+    - Protected: No
+    - Masked: Yes
+
+Required variables for PRODUCTION (EKS):
+
+[ ] KUBE_SERVER
+    - Value: https://<eks-cluster-endpoint>
+    - Protected: Yes
+    - Masked: No
+
+[ ] KUBE_TOKEN
+    - Value: <kubernetes-service-account-token>
+    - Protected: Yes
+    - Masked: Yes
+
+[ ] KUBE_CA_CERT
+    - Value: <base64-encoded-ca-certificate>
+    - Protected: Yes
+    - Masked: No
+    - Type: File
+
+[ ] MONGODB_URI (Production)
+    - Value: mongodb+srv://<user>:<password>@<cluster>.mongodb.net/polyrepo-prod
+    - Protected: Yes
+    - Masked: Yes
+
+[ ] FRONTEND_URL
+    - Value: https://polyrepo.example.com
+    - Protected: Yes
+    - Masked: No
+
+================================================================================
+6. GITLAB CONTAINER REGISTRY
+================================================================================
+
+[ ] Enable Container Registry
+    - Settings > General > Visibility, project features, permissions
+    - Enable Container Registry
+
+[ ] Verify registry access
+    - Deploy > Container Registry
+    - Should show registry URL: registry.gitlab.com/<group>/<project>
+
+================================================================================
+7. OKTETO SETUP (Preview Environments)
+================================================================================
+
+[ ] Create Okteto account
+    - https://cloud.okteto.com or self-hosted
+
+[ ] Install Okteto CLI
+    - macOS: brew install okteto
+    - Verify: okteto version
+
+[ ] Generate API token
+    - Okteto Dashboard > Settings > API Tokens
+    - Create new token for CI/CD
+    - Save token for OKTETO_TOKEN variable
+
+[ ] Configure Okteto namespace (if self-hosted)
+    - okteto namespace create polyrepo
+
+[ ] Test Okteto deployment locally
+    - okteto context use <okteto-url> --token <token>
+    - okteto deploy
+    - okteto destroy
+
+================================================================================
+8. EKS PRODUCTION SETUP
+================================================================================
+
+[ ] Create EKS cluster
+    - Use eksctl, Terraform, or AWS Console
+    - Configure node groups
+
+[ ] Create Kubernetes namespace
+    - kubectl create namespace polyrepo
+
+[ ] Create service account for GitLab
+    - kubectl create serviceaccount gitlab-deployer -n polyrepo
+
+[ ] Create cluster role binding
+    - kubectl create clusterrolebinding gitlab-deployer \
+        --clusterrole=cluster-admin \
+        --serviceaccount=polyrepo:gitlab-deployer
+
+[ ] Get service account token
+    - kubectl create token gitlab-deployer -n polyrepo --duration=8760h
+    - Save for KUBE_TOKEN variable
+
+[ ] Get cluster CA certificate
+    - kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}'
+    - Save for KUBE_CA_CERT variable
+
+[ ] Create Kubernetes deployments
+    - Create deployment manifests for backend and frontend
+    - Create services and ingress
+    - Configure secrets for environment variables
+
+[ ] Set up ingress controller
+    - Install AWS ALB Ingress Controller or nginx-ingress
+    - Configure SSL/TLS certificates
+
+[ ] Configure DNS
+    - Point polyrepo.example.com to load balancer
+
+================================================================================
+9. ENVIRONMENT-SPECIFIC CONFIGURATION FILES
+================================================================================
+
+Update these files with your actual values:
+
+[ ] backend/src/main/resources/application-local.yml
+    - Update CORS allowed origins if needed
+
+[ ] backend/src/main/resources/application-okteto.yml
+    - Update CORS patterns for your Okteto domain
+
+[ ] backend/src/main/resources/application-prod.yml
+    - Verify production settings
+
+[ ] docker/docker-compose.yml
+    - Update Okta URIs for local development
+
+[ ] okteto/docker-compose.yml
+    - Verify Okteto-specific settings
+
+[ ] .gitlab-ci.yml
+    - Update deploy:production with correct namespace/deployment names
+    - Update Okteto URLs if using self-hosted
+
+================================================================================
+10. VERIFICATION STEPS
+================================================================================
+
+Local Development:
+
+[ ] Start services
+    - docker compose -f docker/docker-compose.yml up
+
+[ ] Verify frontend
+    - Open http://localhost:3000
+    - Should see welcome page
+
+[ ] Verify backend
+    - Open http://localhost:8080/actuator/health
+    - Should return {"status":"UP"}
+
+[ ] Verify Swagger UI
+    - Open http://localhost:8080/swagger-ui.html
+    - Should see API documentation
+
+[ ] Run backend tests
+    - cd backend && ./mvnw test
+
+[ ] Run frontend tests
+    - cd frontend && npm test
+
+[ ] Test commit hooks
+    - git commit -m "test: invalid message format"
+    - Should fail commitlint
+
+CI/CD Pipeline:
+
+[ ] Create a test merge request
+    - Verify all pipeline stages pass
+    - Verify preview environment is created
+
+[ ] Merge to main
+    - Verify production deployment is available (manual trigger)
+
+================================================================================
+11. SECURITY CHECKLIST
+================================================================================
+
+[ ] Rotate all tokens/credentials after initial setup
+
+[ ] Enable GitLab secret detection in pipeline
+
+[ ] Review Okta application security settings
+    - Enable MFA for admin accounts
+    - Review session policies
+
+[ ] Configure MongoDB Atlas security
+    - Enable encryption at rest
+    - Enable audit logging
+    - Review network access rules
+
+[ ] Review EKS security
+    - Enable pod security policies
+    - Configure network policies
+    - Enable audit logging
+
+[ ] Set up monitoring and alerting
+    - Configure Prometheus/Grafana or cloud monitoring
+    - Set up alerts for critical metrics
+
+================================================================================
+NOTES
+================================================================================
+
+- Keep this checklist updated as infrastructure changes
+- Store sensitive values in a secure password manager
+- Document any deviations from this setup in ADRs
+
+================================================================================

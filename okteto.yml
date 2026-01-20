@@ -1,0 +1,33 @@
+build:
+  backend:
+    context: .
+    dockerfile: docker/backend/Dockerfile
+  frontend:
+    context: .
+    dockerfile: docker/frontend/Dockerfile
+
+deploy:
+  compose: okteto/docker-compose.yml
+
+dev:
+  backend:
+    image: eclipse-temurin:21-jdk-alpine
+    command: sh -c "./mvnw spring-boot:run -Dspring-boot.run.profiles=local"
+    workdir: /app
+    sync:
+      - backend:/app
+    forward:
+      - 8080:8080
+      - 5005:5005
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      MONGODB_URI: mongodb://mongodb:27017/polyrepo
+
+  frontend:
+    image: node:20-alpine
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    workdir: /app
+    sync:
+      - frontend:/app
+    forward:
+      - 3000:3000

@@ -1,0 +1,123 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: polyrepo-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: polyrepo
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - polyrepo-network
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: polyrepo-mongo-express
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - polyrepo-network
+    profiles:
+      - dev-tools
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    container_name: polyrepo-backend
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      MONGODB_URI: mongodb://mongodb:27017/polyrepo
+      OKTA_ISSUER_URI: https://dev-example.okta.com/oauth2/default
+      OKTA_JWK_SET_URI: https://dev-example.okta.com/oauth2/default/v1/keys
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: wget -q --spider http://localhost:8080/actuator/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - polyrepo-network
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile
+    container_name: polyrepo-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - polyrepo-network
+
+  # Development mode - uses hot reload
+  frontend-dev:
+    image: node:20-alpine
+    container_name: polyrepo-frontend-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:8080
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - polyrepo-network
+    profiles:
+      - dev
+
+  backend-dev:
+    image: eclipse-temurin:21-jdk-alpine
+    container_name: polyrepo-backend-dev
+    working_dir: /app
+    command: sh -c "./mvnw spring-boot:run -Dspring-boot.run.profiles=local -Dspring-boot.run.jvmArguments='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005'"
+    ports:
+      - "8080:8080"
+      - "5005:5005"
+    volumes:
+      - ../backend:/app
+      - maven_cache:/root/.m2
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      MONGODB_URI: mongodb://mongodb:27017/polyrepo
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - polyrepo-network
+    profiles:
+      - dev
+
+volumes:
+  mongodb_data:
+  maven_cache:
+
+networks:
+  polyrepo-network:
+    driver: bridge

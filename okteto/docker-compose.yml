@@ -1,0 +1,47 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: polyrepo
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend/Dockerfile
+    ports:
+      - 8080:8080
+    environment:
+      SPRING_PROFILES_ACTIVE: okteto
+      MONGODB_URI: mongodb://mongodb:27017/polyrepo
+      OKTA_ISSUER_URI: ${OKTA_ISSUER_URI}
+      OKTA_JWK_SET_URI: ${OKTA_JWK_SET_URI}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: wget -q --spider http://localhost:8080/actuator/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend/Dockerfile
+    ports:
+      - 443:80
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mongodb_data:
